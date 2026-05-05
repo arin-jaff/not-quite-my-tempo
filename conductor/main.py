@@ -17,7 +17,7 @@ import cv2
 
 from . import quotes
 from .events import EventLog
-from .gestures import is_fist, is_halt
+from .gestures import best_arm_angle, is_fist, is_halt
 from .hud import draw_hud
 from .player import VideoPlayer
 from .tempo import TempoEstimator
@@ -101,11 +101,26 @@ def main():
             now = time.time()
 
             classification = "no hand"
+            fist_flag = False
+            wy = None
             if res.has_hand:
                 _, wy = res.wrist_xy
-                tempo.update(now, wy)
-                classification = "fist" if is_fist(res.hand_pts) else "open hand"
+                fist_flag = is_fist(res.hand_pts)
+                classification = "fist" if fist_flag else "open hand"
+            elif res.has_pose:
+                # Hand lost — fall back to whichever pose-wrist is most visible.
+                # Tempo keeps tracking; we just don't know the fist state.
+                left_v = float(res.pose_pts[15, 2])
+                right_v = float(res.pose_pts[16, 2])
+                idx, vis = (15, left_v) if left_v >= right_v else (16, right_v)
+                if vis > 0.5:
+                    wy = float(res.pose_pts[idx, 1])
+                    classification = "arm only"
 
+            if wy is not None:
+                tempo.update(now, wy)
+
+            arm_side, arm_angle = best_arm_angle(res.pose_pts)
             halt_now = res.has_hand and is_halt(res.hand_pts, res.pose_pts)
             if halt_now and not halt_active:
                 halt_active = True
@@ -116,19 +131,26 @@ def main():
             elif not halt_now and halt_active:
                 halt_active = False  # released; main loop will re-evaluate
 
+            # Only the fist-halt halts. Once started, brief stillness or
+            # lost-hand frames don't pause; we keep playing and ride out
+            # the gap on the previous tempo.
             if not halt_active:
-                if res.has_hand and tempo.is_moving:
-                    if not started:
-                        started = True
-                        events.add(quotes.pick(quotes.START))
+                if not started and tempo.is_moving:
+                    started = True
+                    events.add(quotes.pick(quotes.START))
+                if started:
                     player.play()
                     status = "PLAYING"
                 else:
-                    if started:
-                        player.pause()
-                        status = "PAUSED"
-                    else:
-                        status = "READY"
+                    status = "READY"
+
+            # Tempo-driven playback rate. VLC scales pitch with speed by
+            # default — so off-tempo conducting also drags pitch with it,
+            # which is the desired effect.
+            if status == "PLAYING" and tempo.bpm is not None:
+                player.set_rate(tempo.bpm / target_bpm)
+            else:
+                player.set_rate(1.0)
 
             # off-tempo nag (cooldown 4s)
             if (
@@ -159,6 +181,13 @@ def main():
                 peaks=tempo.recent_peaks(),
                 events=events.active(),
                 song_name=song_name,
+                hand_pts=res.hand_pts,
+                pose_pts=res.pose_pts,
+                is_fist_flag=fist_flag,
+                is_halt_flag=halt_active,
+                arm_side=arm_side,
+                arm_angle=arm_angle,
+                rate=player.rate,
             )
             cv2.imshow("Conductor", frame)
             key = cv2.waitKey(1) & 0xFF

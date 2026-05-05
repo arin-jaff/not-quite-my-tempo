@@ -21,6 +21,21 @@ class VideoPlayer:
         self._player = self._instance.media_player_new()
         self._player.set_media(self._media)
         self._state = "stopped"
+        self._rate = 1.0
+
+    def set_rate(self, rate):
+        # libVLC scales playback speed; pitch follows speed (no time-stretch),
+        # which is what we want — slower tempo => lower pitch, etc.
+        # Bounds are extreme on purpose; libVLC clamps internally if needed.
+        rate = max(0.05, min(16.0, float(rate)))
+        if abs(rate - self._rate) < 0.01:
+            return
+        self._rate = rate
+        self._player.set_rate(rate)
+
+    @property
+    def rate(self):
+        return self._rate
 
     def play(self):
         if self._state == "playing":

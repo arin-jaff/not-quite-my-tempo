@@ -13,6 +13,21 @@ BLACK = (0, 0, 0)
 GRAPH_LINE = (200, 200, 70)
 PEAK_LINE = (60, 60, 220)
 TOAST_TEXT = (255, 235, 200)
+HAND_BONE = (220, 200, 90)
+HAND_JOINT = (240, 240, 240)
+ARM_BONE = (220, 140, 80)
+
+# MediaPipe Hands topology — 21 landmarks
+HAND_CONNECTIONS = (
+    (0, 1), (1, 2), (2, 3), (3, 4),          # thumb
+    (0, 5), (5, 6), (6, 7), (7, 8),          # index
+    (5, 9), (9, 10), (10, 11), (11, 12),     # middle
+    (9, 13), (13, 14), (14, 15), (15, 16),   # ring
+    (13, 17), (17, 18), (18, 19), (19, 20),  # pinky
+    (0, 17),                                 # palm base
+)
+FINGER_TIPS = (4, 8, 12, 16, 20)
+WRIST_IDX = 0
 
 
 def _shadowed(img, text, org, scale=0.7, color=WHITE, thickness=2):
@@ -41,11 +56,27 @@ def draw_hud(
     peaks,
     events,
     song_name,
+    hand_pts=None,
+    pose_pts=None,
+    is_fist_flag=False,
+    is_halt_flag=False,
+    arm_side=None,
+    arm_angle=None,
+    rate=1.0,
 ):
     h, w = frame.shape[:2]
 
+    # Skeleton goes underneath the panels so text stays readable
+    _draw_skeleton(
+        frame, hand_pts, pose_pts,
+        is_fist_flag=is_fist_flag,
+        is_halt_flag=is_halt_flag,
+        arm_side=arm_side,
+        arm_angle=arm_angle,
+    )
+
     # Top-left: status panel
-    _panel(frame, (10, 10), (370, 138))
+    _panel(frame, (10, 10), (370, 162))
     status_color = (
         GREEN if status == "PLAYING"
         else RED if status == "HALTED"
@@ -55,6 +86,8 @@ def draw_hud(
     _shadowed(frame, f"GESTURE: {classification}", (22, 68), 0.6, WHITE)
     _shadowed(frame, f"SONG: {_truncate(song_name, 32)}", (22, 94), 0.5, DIM, 1)
     _shadowed(frame, f"TARGET: {target_bpm:5.1f} BPM", (22, 122), 0.55, WHITE, 1)
+    rate_color = GREEN if abs(rate - 1.0) < 0.02 else YELLOW
+    _shadowed(frame, f"RATE:   {rate:4.2f}x", (22, 148), 0.55, rate_color, 1)
 
     # Top-right: current BPM readout
     _panel(frame, (w - 270, 10), (w - 10, 100))
@@ -123,6 +156,57 @@ def _draw_graph(frame, history, peaks):
         if t_min <= tp <= t_max:
             px = int(inner_x0 + (tp - t_min) / span * (inner_x1 - inner_x0))
             cv2.line(frame, (px, inner_y0), (px, inner_y1), PEAK_LINE, 1)
+
+
+def _draw_skeleton(
+    frame, hand_pts, pose_pts, *,
+    is_fist_flag, is_halt_flag, arm_side, arm_angle,
+):
+    # Hand bones + joints
+    if hand_pts is not None:
+        bone_color = RED if is_halt_flag else (GREEN if is_fist_flag else HAND_BONE)
+        for a, b in HAND_CONNECTIONS:
+            pa = (int(hand_pts[a, 0]), int(hand_pts[a, 1]))
+            pb = (int(hand_pts[b, 0]), int(hand_pts[b, 1]))
+            cv2.line(frame, pa, pb, bone_color, 2, cv2.LINE_AA)
+        for i in range(hand_pts.shape[0]):
+            p = (int(hand_pts[i, 0]), int(hand_pts[i, 1]))
+            r = 5 if i in FINGER_TIPS else 3
+            cv2.circle(frame, p, r, HAND_JOINT, -1, cv2.LINE_AA)
+        # Wrist marker
+        wp = (int(hand_pts[WRIST_IDX, 0]), int(hand_pts[WRIST_IDX, 1]))
+        cv2.circle(frame, wp, 9, YELLOW, 2, cv2.LINE_AA)
+        _shadowed(frame, "WRIST", (wp[0] + 12, wp[1] - 8), 0.45, YELLOW, 1)
+        if is_halt_flag:
+            _shadowed(frame, "HALT", (wp[0] + 12, wp[1] + 14), 0.55, RED, 2)
+        elif is_fist_flag:
+            _shadowed(frame, "FIST", (wp[0] + 12, wp[1] + 14), 0.5, GREEN, 1)
+
+    # Active arm: shoulder → elbow → wrist
+    if pose_pts is not None and arm_side in ("left", "right"):
+        if arm_side == "left":
+            s_i, e_i, w_i = 11, 13, 15
+        else:
+            s_i, e_i, w_i = 12, 14, 16
+        if (
+            pose_pts[s_i, 2] > 0.3
+            and pose_pts[e_i, 2] > 0.3
+            and pose_pts[w_i, 2] > 0.3
+        ):
+            sp = (int(pose_pts[s_i, 0]), int(pose_pts[s_i, 1]))
+            ep = (int(pose_pts[e_i, 0]), int(pose_pts[e_i, 1]))
+            wp = (int(pose_pts[w_i, 0]), int(pose_pts[w_i, 1]))
+            cv2.line(frame, sp, ep, ARM_BONE, 3, cv2.LINE_AA)
+            cv2.line(frame, ep, wp, ARM_BONE, 3, cv2.LINE_AA)
+            for p in (sp, ep, wp):
+                cv2.circle(frame, p, 5, HAND_JOINT, -1, cv2.LINE_AA)
+            if arm_angle is not None:
+                near_right = abs(arm_angle - 90.0) <= 25.0
+                color = GREEN if near_right else DIM
+                _shadowed(
+                    frame, f"{arm_angle:5.1f}°",
+                    (ep[0] + 10, ep[1] + 6), 0.55, color, 1,
+                )
 
 
 def _draw_events(frame, events, ttl=3.5):

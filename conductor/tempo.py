@@ -1,8 +1,10 @@
-"""Rolling tempo estimator from vertical hand motion.
+"""Rolling tempo estimator from oscillating hand motion.
 
-Each direction change in the wrist Y signal counts as one beat. BPM is
-60 / mean_interval over a short window. We require a minimum amplitude
-between direction changes so jitter at rest doesn't spawn fake beats.
+We track a "motion → stop → motion → stop" cycle. Each transition from
+moving to stopped marks one beat (the moment the conductor's hand
+arrives at a downbeat or upbeat, regardless of direction). BPM is
+60 / mean_interval between recent stops. Hysteresis between move/stop
+thresholds keeps jitter from spawning fake beats.
 """
 from collections import deque
 
@@ -14,22 +16,27 @@ class TempoEstimator:
         self,
         target_bpm,
         window_s=4.0,
-        min_amplitude_px=18.0,
+        move_threshold_px_s=240.0,
+        stop_threshold_px_s=80.0,
+        speed_window_s=0.15,
+        min_beat_gap_s=0.18,
         stationary_speed_px_s=40.0,
         stationary_window_s=0.5,
         on_tempo_tolerance=5.0,
     ):
         self.target_bpm = float(target_bpm)
         self.window_s = window_s
-        self.min_amplitude_px = min_amplitude_px
+        self.move_threshold = move_threshold_px_s
+        self.stop_threshold = stop_threshold_px_s
+        self.speed_window = speed_window_s
+        self.min_beat_gap = min_beat_gap_s
         self.stationary_speed = stationary_speed_px_s
         self.stationary_window = stationary_window_s
         self.tolerance = on_tempo_tolerance
 
         self.samples = deque()      # (t, y)
-        self.peaks = deque()        # t of confirmed direction changes
-        self._last_dir = 0          # +1 down, -1 up (image y grows downward)
-        self._last_extreme_y = None
+        self.peaks = deque()        # t of confirmed motion→stop transitions
+        self._moving = False        # current hysteresis state
 
     def update(self, t, y):
         self.samples.append((t, y))
@@ -39,28 +46,26 @@ class TempoEstimator:
         while self.peaks and self.peaks[0] < cutoff:
             self.peaks.popleft()
 
-        if len(self.samples) < 5:
+        # Speed over the last speed_window seconds (peak-to-peak / span).
+        v_cutoff = t - self.speed_window
+        recent = [(ts, ys) for ts, ys in self.samples if ts >= v_cutoff]
+        if len(recent) < 3:
             return
+        ys = np.array([yy for _, yy in recent])
+        ts = np.array([tt for tt, _ in recent])
+        span = float(ts[-1] - ts[0])
+        if span <= 0:
+            return
+        speed = float(ys.max() - ys.min()) / span
 
-        # smoothed slope from last 5 samples
-        recent_y = np.array([s[1] for s in list(self.samples)[-5:]])
-        slope = float(recent_y[-1] - recent_y[0])
-        if abs(slope) < 1.0:
-            return
-        d = 1 if slope > 0 else -1
-        if self._last_dir == 0:
-            self._last_dir = d
-            self._last_extreme_y = y
-            return
-        if d != self._last_dir:
-            # direction reversed — confirm via amplitude since last extreme
-            if (
-                self._last_extreme_y is not None
-                and abs(y - self._last_extreme_y) >= self.min_amplitude_px
-            ):
-                self.peaks.append(t)
-                self._last_extreme_y = y
-            self._last_dir = d
+        if not self._moving:
+            if speed >= self.move_threshold:
+                self._moving = True
+        else:
+            if speed <= self.stop_threshold:
+                if not self.peaks or (t - self.peaks[-1]) >= self.min_beat_gap:
+                    self.peaks.append(t)
+                self._moving = False
 
     @property
     def bpm(self):
