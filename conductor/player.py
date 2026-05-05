@@ -1,5 +1,7 @@
 """Tiny wrapper around python-vlc for the conductor.
 
+Plays anything libVLC can decode — MP4 video and MP3 audio are both fine.
+
 Three operations matter:
     play()             — start (or resume) playback
     pause()            — freeze where we are

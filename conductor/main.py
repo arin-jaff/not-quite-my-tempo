@@ -6,8 +6,8 @@ Terminal flow:
     3. Step in front of the webcam and conduct.
 
 Main loop reads a webcam frame, runs MediaPipe, updates the tempo
-estimator, decides whether to play / pause / halt the video, and renders
-the HUD on top of the mirrored webcam image.
+estimator, decides whether to play / pause / halt the track, and
+renders the HUD on top of the mirrored webcam image.
 """
 import os
 import sys
@@ -34,10 +34,11 @@ def _list_songs():
         print(f"library/ directory not found at {LIBRARY_DIR}", file=sys.stderr)
         sys.exit(1)
     files = sorted(
-        f for f in os.listdir(LIBRARY_DIR) if f.lower().endswith(".mp4")
+        f for f in os.listdir(LIBRARY_DIR)
+        if f.lower().endswith((".mp4", ".mp3"))
     )
     if not files:
-        print(f"No MP4 files in {LIBRARY_DIR}. Drop one in and try again.")
+        print(f"No MP4/MP3 files in {LIBRARY_DIR}. Drop one in and try again.")
         sys.exit(1)
     return files
 

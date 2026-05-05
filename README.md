@@ -1,8 +1,9 @@
 # Conductor
 
-Webcam-driven video conductor. Move your hand up and down to play the
-loaded MP4; hold still to pause. Throw the right-angle fist (forearm
-vertical, fingers curled) to halt and rewind to the beginning.
+Webcam-driven media conductor. Move your hand up and down to play the
+loaded track (MP4 or MP3); hold still to pause. Throw the right-angle
+fist (forearm vertical, fingers curled) to halt and rewind to the
+beginning.
 
 ## How it works
 
@@ -26,13 +27,21 @@ Each frame:
 
 ## Setup
 
-VLC must be installed on the system (python-vlc binds to it).
+VLC must be installed on the system (python-vlc binds to it). On macOS:
+
+```sh
+brew install --cask vlc
+```
+
+Or download VLC from [videolan.org](https://www.videolan.org/) and drop
+it into `/Applications`. Then install Python deps:
 
 ```sh
 pip install -r requirements.txt
 ```
 
-Drop one or more `.mp4` files into `library/`.
+Drop one or more `.mp4` or `.mp3` files into `library/`. MP3s play
+audio-only; the webcam HUD is still the visible window.
 
 ## Run
 
